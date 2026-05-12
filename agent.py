@@ -1,83 +1,315 @@
 
 
 import os
+from pydoc import text
 import fitz  # PyMuPDF
 import base64
 import requests
 from dotenv import load_dotenv
 from groq import Groq
 from tool import find_therapists
+from reminder import (add_user_reminder,remove_user_reminder,get_user_reminders,clear_user_reminders,)
 
 load_dotenv()
 
-# ✅ Groq Client Setup
+# ==================================================
+# 👤 USER SESSION TRACKER
+# ==================================================
+
+user_sessions = {}
+# ======================================================
+# ✅ GROQ CLIENT
+# ======================================================
+
+# ==================================================
+# ⏰ REMINDER STORAGE
+# ==================================================
+
+medicine_reminders = {}
+
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# ✅ Stable 2026 Models
-VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" 
+# ======================================================
+# ✅ MODELS
+# ======================================================
+
+VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 CHAT_MODEL = "llama-3.3-70b-versatile"
 
-user_states = {}  # यूजर स्टेट ट्रैकिंग के लिए
+# ======================================================
+# 🧠 USER STATES
+# ======================================================
 
-# --- 🧠 SYSTEM PROMPTS ---
+user_states = {}
+
+# ======================================================
+# 🧠 SYSTEM PROMPTS
+# ======================================================
 
 DOCTOR_SYSTEM_PROMPT = """
-You are 'Dr. Sahayak', a Senior Medical AI & Nutritionist. 
-1. If a user asks about a disease (Diabetes, BP, Thyroid), provide a structured 'Diet Chart' (Kya khayein/Kya na khayein).
-2. Give clear breakfast, lunch, and dinner suggestions in Hinglish.
-3. Suggest common OTC medicines with safety warnings.
-4. Keep the tone empathetic and professional.
+You are 'Dr. Sahayak', a Senior Medical AI Assistant.
+
+Rules:
+1. Explain medical issues in simple Hinglish.
+2. Suggest safe OTC medicines only.
+3. Give hydration, diet, and rest advice.
+4. Never panic the user.
+5. For serious symptoms → recommend doctor visit.
 """
 
-
 VISION_PROMPT = """
-You are an Expert Medical Radiologist. Analyze this image (X-ray, Prescription, or Report):
-1. Identify what this is. 
-2. Explain findings in simple Hinglish.
-3. Highlight critical issues if any.
+You are a medical image verification AI.
+
+FIRST determine whether the uploaded image is actually medical or not.
+
+Medical images include:
+- Prescription
+- Blood report
+- X-ray
+- MRI
+- CT Scan
+- Lab report
+- Medicine strip
+- Hospital document
+
+If the image is NOT medical:
+Reply ONLY with:
+
+❌ This image does not appear to be medical-related. Please upload a medical report, prescription, scan, or health-related image.
+
+Do NOT explain anything else.
+
+If the image IS medical:
+Then:
+1. Identify the report type
+2. Explain findings in simple Hinglish
+3. Mention important abnormalities
+4. Suggest precautions if needed
 """
 
 PDF_PROMPT = """
-You are a Medical Specialist. Analyze the following text extracted from a medical report PDF:
-1. Summarize the findings.
-2. Identify abnormal values (High/Low) and explain them in Hinglish.
-3. Suggest next steps or lifestyle advice.
+You are a medical PDF verification AI.
+
+FIRST determine whether the uploaded PDF is actually medical-related.
+
+Medical PDFs include:
+- Blood reports
+- Lab reports
+- Hospital discharge summaries
+- Prescriptions
+- MRI/CT reports
+- Diagnostic reports
+
+If the PDF is NOT medical:
+Reply ONLY with:
+
+❌ This PDF does not appear to be medical-related. Please upload a medical report or health-related PDF.
+
+Do NOT explain anything else.
+
+If the PDF IS medical:
+Then:
+1. Summarize findings
+2. Highlight abnormal values
+3. Explain in simple Hinglish
+4. Suggest precautions
 """
 
-# --- 📄 PDF EXTRACTION FUNCTION ---
-def analyze_pdf_report(pdf_path):
+
+def is_medicine_query(text):
+
+    medicine_prompt = f"""
+You are a medicine detection AI.
+
+Determine whether this text is:
+1. A medicine name
+2. A medical drug
+3. A tablet/syrup/capsule name
+
+Reply ONLY:
+YES
+or
+NO
+
+Text: {text}
+"""
+
     try:
+
+        response = client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[{"role": "user", "content": medicine_prompt}],
+            temperature=0,
+        )
+
+        answer = response.choices[0].message.content.strip().upper()
+
+        return answer == "YES"
+
+    except:
+
+        return False
+
+
+def explain_medicine(medicine_name):
+
+    prompt = f"""
+You are a medical assistant.
+
+Explain this medicine in simple Hinglish:
+
+Medicine: {medicine_name}
+
+Give:
+1. What it is used for
+2. Common dosage
+3. Common side effects
+4. Important warning
+
+Keep response short and safe.
+Never give dangerous advice.
+"""
+
+    try:
+
+        response = client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+
+        print("Medicine Error:", e)
+
+        return "❌ Medicine information unavailable."
+
+
+# ======================================================
+# 📄 PDF ANALYZER
+# ======================================================
+
+
+def analyze_pdf_report(pdf_path):
+
+    try:
+
         text = ""
+
+        # ==============================================
+        # 📄 EXTRACT PDF TEXT
+        # ==============================================
+
         with fitz.open(pdf_path) as doc:
-            # पहले 5 पेज स्कैन करें
+
             for page in doc[:5]:
-                text += page.get_text()
-        
+
+                page_text = page.get_text()
+
+                if page_text:
+                    text += page_text
+
+        # ==============================================
+        # ❌ EMPTY PDF
+        # ==============================================
+
         if not text.strip():
-            return "❌ PDF में कोई टेक्स्ट नहीं मिला (शायद यह इमेज-बेस्ड PDF है)। कृपया इसकी फोटो खींचकर भेजें।"
+
+            return (
+                "❌ PDF mein readable text nahi mila.\n"
+                "Kripya clear medical report upload karein."
+            )
+
+        # ==============================================
+        # 🤖 AI ANALYSIS
+        # ==============================================
 
         response = client.chat.completions.create(
             model=CHAT_MODEL,
             messages=[
                 {"role": "system", "content": PDF_PROMPT},
-                {"role": "user", "content": f"Analyze this report text:\n\n{text}"}
+                {"role": "user", "content": f"Analyze this PDF:\n\n{text[:12000]}"},
             ],
-            temperature=0.3
+            temperature=0.2,
         )
-        return response.choices[0].message.content
+
+        reply = response.choices[0].message.content.strip()
+
+        # ==============================================
+        # 🚫 NON-MEDICAL PDF FILTER
+        # ==============================================
+
+        non_medical_words = [
+            "electricity bill",
+            "utility bill",
+            "invoice",
+            "payment receipt",
+            "car service",
+            "bank statement",
+            "transaction",
+            "gst",
+            "receipt",
+            "not medical",
+        ]
+
+        if any(word in reply.lower() for word in non_medical_words):
+
+            return (
+                "❌ Yeh PDF medical-related nahi lag rahi.\n\n"
+                "Kripya upload karein:\n"
+                "• Blood Report\n"
+                "• Lab Report\n"
+                "• Prescription\n"
+                "• Hospital Report"
+            )
+
+        return reply
+
     except Exception as e:
-        print(f"❌ PDF Error: {e}")
-        return "❌ PDF फाइल पढ़ने में समस्या आई है।"
 
-# --- 🖼️ ENHANCED VISION ANALYSIS (Variable Fix Done) ---
-def analyze_medical_image(image_url):
+        print("❌ PDF Error:", e)
+
+        return "❌ PDF analyze karne mein problem aayi."
+
+
+# ======================================================
+# 🖼️ IMAGE ANALYZER
+# ======================================================
+
+
+def analyze_medical_image(image_input):
+
     try:
-        response = requests.get(image_url, timeout=15)
-        if response.status_code != 200:
-            return "❌ रिपोर्ट लोड नहीं हो पाई। कृपया फिर से फोटो भेजें।"
 
-        # Variable naming fix: Using 'encoded_image' consistently
-        encoded_image = base64.b64encode(response.content).decode('utf-8')
+        # ==============================================
+        # ✅ CASE 1 → LOCAL FILE (WhatsApp)
+        # ==============================================
+
+        if os.path.exists(image_input):
+
+            with open(image_input, "rb") as img_file:
+
+                encoded_image = base64.b64encode(img_file.read()).decode("utf-8")
+
+        # ==============================================
+        # ✅ CASE 2 → URL (Telegram)
+        # ==============================================
+
+        else:
+
+            response = requests.get(image_input, timeout=20)
+
+            if response.status_code != 200:
+
+                return "❌ Image load nahi ho paayi."
+
+            encoded_image = base64.b64encode(response.content).decode("utf-8")
+
+        # ==============================================
+        # 🤖 GROQ VISION AI
+        # ==============================================
 
         ai_response = client.chat.completions.create(
             model=VISION_MODEL,
@@ -88,66 +320,353 @@ def analyze_medical_image(image_url):
                         {"type": "text", "text": VISION_PROMPT},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"}
-                        }
-                    ]
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded_image}"
+                            },
+                        },
+                    ],
                 }
             ],
-            temperature=0.1
+            temperature=0.1,
         )
-        return ai_response.choices[0].message.content
+
+        reply = ai_response.choices[0].message.content.strip()
+
+        # ==============================================
+        # 🚫 NON-MEDICAL IMAGE FILTER
+        # ==============================================
+
+        non_medical_words = [
+            "car service",
+            "invoice",
+            "receipt",
+            "not medical",
+            "bill",
+            "vehicle",
+            "payment",
+            "shop receipt",
+        ]
+
+        if any(word in reply.lower() for word in non_medical_words):
+
+            return (
+                "❌ Yeh image medical-related nahi lag rahi.\n\n"
+                "Kripya upload karein:\n"
+                "• Prescription\n"
+                "• Blood Report\n"
+                "• X-ray\n"
+                "• MRI/CT Scan"
+            )
+
+        return reply
 
     except Exception as e:
-        print(f"❌ Specialist Vision Error: {e}")
-        return "❌ माफ़ी चाहती हूँ, इस रिपोर्ट को पढ़ने में कुछ दिक्कत आ रही है।"
 
-# --- 💬 ADVANCED DOCTOR CHAT ---
+        print("❌ Vision Error:", e)
+
+        return "❌ Image analyze karne mein problem aayi."
+
+
+# ======================================================
+# 💬 NORMAL AI CHAT
+# ======================================================
+
+
 def call_doctor_ai(user_input):
+
     try:
+
         response = client.chat.completions.create(
             model=CHAT_MODEL,
             messages=[
                 {"role": "system", "content": DOCTOR_SYSTEM_PROMPT},
-                {"role": "user", "content": user_input}
+                {"role": "user", "content": user_input},
             ],
-            temperature=0.4
+            temperature=0.4,
         )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return "⚠️ सर्वर अभी थोड़ा बिजी है। इमरजेंसी में पास के अस्पताल जाएँ।"
 
-# --- 🚀 MAIN ROUTER (Fully Functional) ---
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+
+        print("❌ Chat Error:", e)
+
+        return "⚠️ Server busy hai. " "Kripya thodi der baad try karein."
+
+
+# ======================================================
+# 🚀 MAIN ROUTER
+# ======================================================
+
+
 def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path=None):
+
     text = user_input.lower().strip()
+
     state = user_states.get(user_id)
 
-    # 1. प्राथमिकता: PDF या Photo
-    if pdf_path: return analyze_pdf_report(pdf_path)
-    if image_url: return analyze_medical_image(image_url)
+    # ==================================================
+    # 👋 FIRST TIME USER WELCOME
+    # ==================================================
 
-    # 2. स्टेट हैंडलिंग (अगर बॉट शहर का इंतज़ार कर रहा है)
+    if user_id not in user_sessions:
+
+        user_sessions[user_id] = True
+
+        return (
+            "👨‍⚕️ Welcome to *MediMitra AI Assistant* 💙\n\n"
+            "I'm your personal medical support bot.\n\n"
+            "✨ Available Features:\n"
+            "• 🤒 Symptom Guidance\n"
+            "• 💊 Medicine Information\n"
+            "• 📄 Medical PDF Analysis\n"
+            "• 🖼️ Prescription & X-ray Scan\n"
+            "• 🧠 Therapist Support\n"
+            "• 🚨 Emergency Detection\n"
+            "• 📞 Emergency Call Support\n"
+            "• ⏰ Medicine Reminder\n\n"
+            "👉 To activate the assistant,\n"
+            "simply say:\n"
+            "• Hi\n"
+            "• Hello\n"
+            "• I need help\n\n"
+            "💬 How can I help you today?"
+        )
+
+    # ==================================================
+    # 🚨 SUICIDE / EMERGENCY DETECTION (TOP PRIORITY)
+    # ==================================================
+
+    emergency_words = [
+        "i want to die",
+        "kill myself",
+        "suicide",
+        "end my life",
+        "i don't want to live",
+        "mar jana chahta hu",
+        "khud ko mar dunga",
+        "jeena nahi hai",
+        "मर जाना चाहता हूँ",
+    ]
+
+    if any(word in text for word in emergency_words):
+
+        # ✅ set state
+        user_states[user_id] = "waiting_emergency_reply"
+
+        return (
+            "🚨 I'm here for you. Please don't lose hope.\n\n"
+            "📞 Emergency Helplines:\n"
+            "• AASRA: 9820466726\n"
+            "• Kiran Helpline: 1800-599-0019\n\n"
+            "🙏 Please talk to someone you trust right now.\n\n"
+            "📞 Do you want me to call you immediately?\n"
+            "Reply with YES."
+        )
+
+    # ==================================================
+    # 📞 EMERGENCY CALL CONFIRM
+    # ==================================================
+
+    if state == "waiting_emergency_reply":
+
+        # reset state
+        user_states[user_id] = None
+
+        if text == "yes":
+
+            return (
+                "📞 Emergency support request received.\n"
+                "Please stay calm.\n"
+                "A support call will reach you shortly."
+            )
+
+        else:
+
+            return (
+                "🙏 Okay.\n"
+                "Please don't stay alone right now.\n"
+                "Talk to a trusted friend or family member."
+            )
+
+    # ==================================================
+    # 👋 GREETING DETECTION
+    # ==================================================
+    greetings = [
+        "hi",
+        "hello",
+        "hey",
+        "hii",
+        "hy",
+        "good morning",
+        "good evening",
+        "good afternoon",
+    ]
+
+    if text in greetings:
+
+        return (
+            "👋 Hello! I'm *MediMitra AI Assistant*.\n\n"
+            "I can help you with:\n\n"
+            "🩺 Health Symptoms\n"
+            "💊 Medicine Guidance\n"
+            "📄 Medical Reports\n"
+            "🖼️ Prescription Analysis\n"
+            "🧠 Therapist Support\n"
+            "🚨 Emergency Help\n"
+            "⏰ Medicine Reminder---remind 08:30 dolo,my reminders,remove dolo,clear reminders\n\n"
+            "💬 Please tell me your health concern."
+        )
+        # ==================================================
+
+    # ⏰ ADD REMINDER
+    # ==================================================
+
+    if text.startswith("remind"):
+
+        return add_user_reminder(user_id, text)
+    # ==================================================
+    # 🗑️ REMOVE REMINDER
+    # ==================================================
+
+    if text.startswith("remove"):
+
+        return remove_user_reminder(user_id, text)
+
+    # ==================================================
+
+    # 📋 LIST REMINDERS
+    # ==================================================
+
+    if text == "my reminders":
+
+        return get_user_reminders(user_id)
+
+    # ==================================================
+
+    # 🧹 CLEAR REMINDERS
+    # ==================================================
+
+    if text == "clear reminders":
+
+        return clear_user_reminders(user_id)
+
+    # ==================================================
+    # 📄 PDF PRIORITY
+    # ==================================================
+
+    if pdf_path:
+
+        return analyze_pdf_report(pdf_path)
+
+    # ==================================================
+    # 🖼️ IMAGE PRIORITY
+    # ==================================================
+
+    if image_url:
+
+        return analyze_medical_image(image_url)
+
+    # ==================================================
+    # 🧠 WAITING CITY
+    # ==================================================
+
     if state == "waiting_city":
-        user_states[user_id] = None # स्टेट क्लियर करें
+
+        user_states[user_id] = None
+
         return find_therapists(text)
 
-    # 3. थेरेपिस्ट/डॉक्टर सर्च लॉजिक (यहीं गड़बड़ हो रही थी)
-    therapy_keywords = ["therapist", "psychologist", "psychiatrist", "doctor search", "counselor"]
+    # ==================================================
+    # 🧠 THERAPIST SEARCH
+    # ==================================================
+
+    therapy_keywords = [
+        "therapist",
+        "therapiest",
+        "psychologist",
+        "psychiatrist",
+        "counselor",
+    ]
+
     if any(word in text for word in therapy_keywords):
-        # अगर यूजर ने शहर का नाम मैसेज में ही लिख दिया है (e.g. "Therapist in Jabalpur")
+
         result = find_therapists(text)
-        if "❌" not in result: # अगर शहर मिल गया
+
+        if "❌" not in result:
+
             return result
+
         else:
-            # अगर शहर नहीं मिला, तो स्टेट बदलें और शहर पूछें
+
             user_states[user_id] = "waiting_city"
-            return "📍 मैं आपकी मदद कर सकता हूँ। कृपया अपने शहर का नाम बताएं? (जैसे: Jabalpur)"
 
-    # 4. इमरजेंसी चेक
-    if any(word in text for word in ["emergency", "suicide", "bleeding"]):
-        return "🚨 **इमरजेंसी!** कृपया तुरंत 108 पर कॉल करें।"
-    
-    if "sos" in text or "help me" in text:
-       return "🚨 **EMERGENCY DETECTED!** 🚨\n\nMain help mang rahi hoon. Kripya apna **Live Location** niche diye gaye 'Attachment' icon se share karein taaki main use save kar sakoon!"
+            return "📍 Please tell your city name.\n" "Example: Jabalpur"
 
-    # 5. नॉर्मल डॉक्टर चैट (Groq AI)
+            # ==================================================
+    # 💊 MEDICINE DETECTION
+    # ==================================================
+
+    if is_medicine_query(user_input):
+
+        return explain_medicine(user_input)
+
+    # ==================================================
+    # ⏰ MEDICINE REMINDER
+    # ==================================================
+
+    if "medicine reminder" in text:
+
+        return (
+            "⏰ Medicine Reminder Feature\n\n"
+            "Please tell:\n"
+            "1. Medicine Name\n"
+            "2. Time\n\n"
+            "Example:\n"
+            "Paracetamol at 8 PM"
+        )
+
+    # ==================================================
+    # 🤒 HEALTH SYMPTOMS
+    # ==================================================
+
+    health_keywords = [
+        "fever",
+        "cold",
+        "headache",
+        "vomit",
+        "vomiting",
+        "pain",
+        "dizziness",
+        "anxiety",
+        "stress",
+        "depression",
+        "cough",
+        "bp",
+        "sugar",
+        "medicine",
+        "doctor",
+        "ill",
+        "sick",
+    ]
+
+    # ==================================================
+    # ❌ NON-MEDICAL RANDOM MESSAGE
+    # ==================================================
+
+    if not any(word in text for word in health_keywords):
+
+        return (
+            "⚠️ I am a medical assistant bot.\n\n"
+            "Please ask:\n"
+            "• Health symptoms\n"
+            "• Medicine guidance\n"
+            "• Medical reports\n"
+            "• Therapist help"
+        )
+
+    # ==================================================
+    # 🤖 NORMAL MEDICAL AI CHAT
+    # ==================================================
+
     return call_doctor_ai(user_input)
