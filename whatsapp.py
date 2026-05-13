@@ -9,27 +9,27 @@ from typing import Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 
-# ✅ Load env
+# =======Load env======
 load_dotenv()
 
 app = FastAPI()
 
-# ✅ Twilio Credentials
+# =======Twilio Credentials=======
 ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 
 twilio_client = Client(ACCOUNT_SID, AUTH_TOKEN)
 
-# ✅ Scheduler for Medicine Reminders
+# =======Scheduler for Medicine Reminders=======
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 scheduler.start()
 
-# 🧠 Temporary states for emergency
+# =======Temporary states for emergency=======
 user_states = {}
 
 
-# --- ⏰ REMINDER SENDING FUNCTION ---
+# ======REMINDER SENDING FUNCTION=======
 def send_wa_reminder(chat_id, medicine):
     try:
         twilio_client.messages.create(
@@ -42,7 +42,7 @@ def send_wa_reminder(chat_id, medicine):
         print(f"❌ Reminder failed: {e}")
 
 
-# --- 📞 EMERGENCY CALL FUNCTION ---
+# ==========EMERGENCY CALL FUNCTION =========
 def emergency_call(phone_number):
     if not phone_number.startswith("+91"):
         phone_number = "+91" + phone_number[-10:]
@@ -59,7 +59,7 @@ def emergency_call(phone_number):
         return f"❌ Call failed: {str(e)}"
 
 
-# --- 🚀 MAIN WHATSAPP WEBHOOK ---
+# =======MAIN WHATSAPP WEBHOOK=======
 @app.post("/whatsapp")
 async def whatsapp_bot(
     Body: str = Form(""),
@@ -74,7 +74,7 @@ async def whatsapp_bot(
     image_path = None
     pdf_path = None
 
-    # 1️⃣ 📂 FILE HANDLING (Authenticated Download Fix)
+    # ======= FILE HANDLING (Authenticated Download Fix)=======
     if MediaUrl0:
         auth = (ACCOUNT_SID, AUTH_TOKEN)  # Twilio security key
 
@@ -99,7 +99,7 @@ async def whatsapp_bot(
             else:
                 pdf_path = None
 
-    # 2️⃣ 🚨 EMERGENCY FLOW
+    # ======== EMERGENCY FLOW=============
     emergency_keywords = ["kill myself", "suicide", "want to die", "end my life"]
 
     if any(word in text for word in emergency_keywords):
@@ -119,7 +119,7 @@ async def whatsapp_bot(
             user_states[user_id] = None
             response_text = "Okay. I'm still here if you need to talk."
 
-    # 3️⃣ ⏰ REMINDER COMMANDS
+    # ======== REMINDER COMMANDS===========
     elif text.startswith("/remind"):
         try:
             parts = incoming_msg.split(" ", 2)
@@ -152,21 +152,21 @@ async def whatsapp_bot(
         except:
             response_text = f"❓ '{med_name}' naam ka कोई reminder nahi mila."
 
-    # 4️⃣ 🤖 NORMAL AI FLOW
+    # ======== NORMAL AI FLOW==========
     else:
         # AI (agent.py) se response lena
         # Note: image_url me hum local path bhej rahe hain
         response_text = get_ai_response(
             incoming_msg, user_id=user_id, image_url=image_path, pdf_path=pdf_path
         )
-
-    # 5️⃣ 🗑️ CLEANUP (Delete temp files)
+    
+    # ======= CLEANUP (Delete temp files)=======
     if pdf_path and os.path.exists(pdf_path):
         os.remove(pdf_path)
     if image_path and os.path.exists(image_path):
         os.remove(image_path)
 
-    # 📤 SEND RESPONSE
+    # =========SEND RESPONSE=========
     tw_resp = MessagingResponse()
     tw_resp.message(response_text)
     return Response(content=str(tw_resp), media_type="application/xml")

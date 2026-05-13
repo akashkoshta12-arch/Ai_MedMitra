@@ -1,15 +1,10 @@
 from datetime import time
 import pytz
-# ======================================================
-# 📦 REMINDER STORAGE
-# ======================================================
 
+# ==========REMINDER STORAGE=========
 medicine_reminders = {}
 
-# ======================================================
-# ➕ ADD REMINDER
-# ======================================================
-
+# =========ADD REMINDER============
 def add_user_reminder(user_id, text):
 
     try:
@@ -27,18 +22,13 @@ def add_user_reminder(user_id, text):
 
         medicine = " ".join(parts[2:]).lower()
 
-        # ==============================================
-        # 👤 CREATE USER STORAGE
-        # ==============================================
-
+    
+        # ========== CREATE USER STORAGE===========
         if user_id not in medicine_reminders:
 
             medicine_reminders[user_id] = []
 
-        # ==============================================
-        # 🚫 DUPLICATE CHECK
-        # ==============================================
-
+        # ======== DUPLICATE CHECK============
         for r in medicine_reminders[user_id]:
 
             if (
@@ -51,10 +41,8 @@ def add_user_reminder(user_id, text):
                     "⚠️ Reminder already exists."
                 )
 
-        # ==============================================
-        # 💾 SAVE
-        # ==============================================
-
+    
+        #  =============SAVE==========
         medicine_reminders[user_id].append({
 
             "medicine": medicine,
@@ -80,10 +68,7 @@ def add_user_reminder(user_id, text):
             "❌ Invalid reminder format."
         )
 
-# ======================================================
-# 🗑️ REMOVE REMINDER
-# ======================================================
-
+# ========= REMOVE REMINDER =========
 def remove_user_reminder(user_id, text):
 
     try:
@@ -122,10 +107,7 @@ def remove_user_reminder(user_id, text):
             "❌ Failed to remove reminder."
         )
 
-# ======================================================
-# 📋 LIST REMINDERS
-# ======================================================
-
+# ========= LIST REMINDERS =========
 def get_user_reminders(user_id):
 
     reminders = medicine_reminders.get(
@@ -151,10 +133,7 @@ def get_user_reminders(user_id):
 
     return msg
 
-# ======================================================
-# 🧹 CLEAR REMINDERS
-# ======================================================
-
+# ========= CLEAR REMINDERS =========
 def clear_user_reminders(user_id):
 
     medicine_reminders[user_id] = []

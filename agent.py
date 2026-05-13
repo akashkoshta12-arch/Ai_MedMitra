@@ -1,5 +1,3 @@
-
-
 import os
 from pydoc import text
 import fitz  # PyMuPDF
@@ -8,46 +6,41 @@ import requests
 from dotenv import load_dotenv
 from groq import Groq
 from tool import find_therapists
-from reminder import (add_user_reminder,remove_user_reminder,get_user_reminders,clear_user_reminders,)
+from reminder import (
+    add_user_reminder,
+    remove_user_reminder,
+    get_user_reminders,
+    clear_user_reminders,
+)
+from medical_keywords import HEALTH_KEYWORDS
 
 load_dotenv()
 
-# ==================================================
-# 👤 USER SESSION TRACKER
-# ==================================================
-
+# ========== USER SESSION TRACKER================
 user_sessions = {}
-# ======================================================
-# ✅ GROQ CLIENT
-# ======================================================
 
-# ==================================================
-# ⏰ REMINDER STORAGE
-# ==================================================
+#  ===============REMINDER STORAGE===============
 
 medicine_reminders = {}
 
+# ========= GROQ CLIENT=============
+
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# ======================================================
-# ✅ MODELS
-# ======================================================
+# ============== MODELS=============
 
 VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 CHAT_MODEL = "llama-3.3-70b-versatile"
 
-# ======================================================
-# 🧠 USER STATES
-# ======================================================
+
+#  ==================USER STATES===================
 
 user_states = {}
 
-# ======================================================
-# 🧠 SYSTEM PROMPTS
-# ======================================================
+# ========== SYSTEM PROMPTS=============
 
 DOCTOR_SYSTEM_PROMPT = """
-You are 'Dr. Sahayak', a Senior Medical AI Assistant.
+You are 'Dr. Sahayak', a Senior and expert  Medical AI Assistant.
 
 Rules:
 1. Explain medical issues in simple Hinglish.
@@ -55,6 +48,33 @@ Rules:
 3. Give hydration, diet, and rest advice.
 4. Never panic the user.
 5. For serious symptoms → recommend doctor visit.
+6. For mental health → suggest therapist.
+7. For emergencies → provide helpline numbers.
+8. Always be empathetic and supportive.
+9. Never give dangerous advice.
+10.MEDICAL ANALYSIS PROTOCOL 
+If the input is related to a disease, symptom, or medical report, follow this structure:
+
+1. 📝 Disease Explanation: 
+   - बीमारी क्या है, इसे आसान भाषा (Hinglish) में 5-6 लाइनों में समझाएं।
+   - यह शरीर को कैसे प्रभावित करती है, यह बताएं।
+
+2. ⚠️ Symptoms (लक्षण):
+   - इस बीमारी के मुख्य लक्षण क्या होते हैं, उनकी एक छोटी लिस्ट दें।
+
+3. 💊 Medicine Suggestions:
+   - Possible Medicines: जितनी संभव हो उतनी दवाओं के नाम बताएं जो आमतौर पर इस स्थिति में दी जाती हैं।
+   - Classification: दवाओं को दो भागों में बांटें:
+     a) OTC Medicines: जो सुरक्षित हैं और बिना पर्चे के ली जा सकती हैं (जैसे Paracetamol, Antacids)।
+     b) Prescription-only: जो केवल डॉक्टर की सलाह पर ही लेनी चाहिए (जैसे Antibiotics, Steroids, या High-dose drugs)।
+
+4. 🥗 Lifestyle & Diet:
+   - क्या खाना चाहिए और किन चीजों से परहेज करना चाहिए।
+
+--- ⚠️ MANDATORY SAFETY DISCLAIMER ---
+Every medical response MUST end with this disclaimer in Hindi:
+"चेतावनी: मैं एक एआई हूँ। यह जानकारी केवल आपके ज्ञान के लिए है। किसी भी दवा को शुरू करने से पहले कृपया अपने डॉक्टर से परामर्श ज़रूर करें।"
+
 """
 
 VISION_PROMPT = """
@@ -187,9 +207,7 @@ Never give dangerous advice.
         return "❌ Medicine information unavailable."
 
 
-# ======================================================
-# 📄 PDF ANALYZER
-# ======================================================
+# ================= PDF ANALYZER =====================
 
 
 def analyze_pdf_report(pdf_path):
@@ -198,9 +216,7 @@ def analyze_pdf_report(pdf_path):
 
         text = ""
 
-        # ==============================================
-        # 📄 EXTRACT PDF TEXT
-        # ==============================================
+        # ========= EXTRACT PDF TEXT===========
 
         with fitz.open(pdf_path) as doc:
 
@@ -211,9 +227,7 @@ def analyze_pdf_report(pdf_path):
                 if page_text:
                     text += page_text
 
-        # ==============================================
-        # ❌ EMPTY PDF
-        # ==============================================
+        # =================== EMPTY PDF==============
 
         if not text.strip():
 
@@ -222,9 +236,7 @@ def analyze_pdf_report(pdf_path):
                 "Kripya clear medical report upload karein."
             )
 
-        # ==============================================
-        # 🤖 AI ANALYSIS
-        # ==============================================
+        # ========== AI ANALYSIS============
 
         response = client.chat.completions.create(
             model=CHAT_MODEL,
@@ -237,9 +249,7 @@ def analyze_pdf_report(pdf_path):
 
         reply = response.choices[0].message.content.strip()
 
-        # ==============================================
-        # 🚫 NON-MEDICAL PDF FILTER
-        # ==============================================
+        # ============NON-MEDICAL PDF FILTER=============
 
         non_medical_words = [
             "electricity bill",
@@ -274,18 +284,14 @@ def analyze_pdf_report(pdf_path):
         return "❌ PDF analyze karne mein problem aayi."
 
 
-# ======================================================
-# 🖼️ IMAGE ANALYZER
-# ======================================================
+# ============ IMAGE ANALYZER==============
 
 
 def analyze_medical_image(image_input):
 
     try:
 
-        # ==============================================
-        # ✅ CASE 1 → LOCAL FILE (WhatsApp)
-        # ==============================================
+        # ==========CASE 1 → LOCAL FILE (WhatsApp)=========
 
         if os.path.exists(image_input):
 
@@ -293,9 +299,7 @@ def analyze_medical_image(image_input):
 
                 encoded_image = base64.b64encode(img_file.read()).decode("utf-8")
 
-        # ==============================================
-        # ✅ CASE 2 → URL (Telegram)
-        # ==============================================
+        # ========== CASE 2 → URL (Telegram)==========
 
         else:
 
@@ -307,9 +311,7 @@ def analyze_medical_image(image_input):
 
             encoded_image = base64.b64encode(response.content).decode("utf-8")
 
-        # ==============================================
-        # 🤖 GROQ VISION AI
-        # ==============================================
+        # =========== GROQ VISION AI============
 
         ai_response = client.chat.completions.create(
             model=VISION_MODEL,
@@ -332,9 +334,7 @@ def analyze_medical_image(image_input):
 
         reply = ai_response.choices[0].message.content.strip()
 
-        # ==============================================
-        # 🚫 NON-MEDICAL IMAGE FILTER
-        # ==============================================
+        # ======== NON-MEDICAL IMAGE FILTER=========
 
         non_medical_words = [
             "car service",
@@ -367,9 +367,7 @@ def analyze_medical_image(image_input):
         return "❌ Image analyze karne mein problem aayi."
 
 
-# ======================================================
-# 💬 NORMAL AI CHAT
-# ======================================================
+# =========== NORMAL AI CHAT===========
 
 
 def call_doctor_ai(user_input):
@@ -394,9 +392,7 @@ def call_doctor_ai(user_input):
         return "⚠️ Server busy hai. " "Kripya thodi der baad try karein."
 
 
-# ======================================================
-# 🚀 MAIN ROUTER
-# ======================================================
+# ========== MAIN ROUTER================
 
 
 def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path=None):
@@ -405,9 +401,7 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
 
     state = user_states.get(user_id)
 
-    # ==================================================
-    # 👋 FIRST TIME USER WELCOME
-    # ==================================================
+    # ======= FIRST TIME USER WELCOME=========
 
     if user_id not in user_sessions:
 
@@ -433,9 +427,7 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
             "💬 How can I help you today?"
         )
 
-    # ==================================================
-    # 🚨 SUICIDE / EMERGENCY DETECTION (TOP PRIORITY)
-    # ==================================================
+    # ============ SUICIDE / EMERGENCY DETECTION (TOP PRIORITY)=========
 
     emergency_words = [
         "i want to die",
@@ -464,9 +456,7 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
             "Reply with YES."
         )
 
-    # ==================================================
-    # 📞 EMERGENCY CALL CONFIRM
-    # ==================================================
+    # ======== EMERGENCY CALL CONFIRM===========
 
     if state == "waiting_emergency_reply":
 
@@ -489,9 +479,7 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
                 "Talk to a trusted friend or family member."
             )
 
-    # ==================================================
-    # 👋 GREETING DETECTION
-    # ==================================================
+    # ========= GREETING DETECTION========
     greetings = [
         "hi",
         "hello",
@@ -517,59 +505,44 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
             "⏰ Medicine Reminder---remind 08:30 dolo,my reminders,remove dolo,clear reminders\n\n"
             "💬 Please tell me your health concern."
         )
-        # ==================================================
 
-    # ⏰ ADD REMINDER
-    # ==================================================
+    # =========ADD REMINDER==============
 
     if text.startswith("remind"):
 
         return add_user_reminder(user_id, text)
-    # ==================================================
-    # 🗑️ REMOVE REMINDER
-    # ==================================================
+
+    # ========= REMOVE REMINDER ==============
 
     if text.startswith("remove"):
 
         return remove_user_reminder(user_id, text)
 
-    # ==================================================
-
-    # 📋 LIST REMINDERS
-    # ==================================================
+    # ========= LIST REMINDERS =============
 
     if text == "my reminders":
 
         return get_user_reminders(user_id)
 
-    # ==================================================
-
-    # 🧹 CLEAR REMINDERS
-    # ==================================================
+    # ========= CLEAR REMINDERS =============
 
     if text == "clear reminders":
 
         return clear_user_reminders(user_id)
 
-    # ==================================================
-    # 📄 PDF PRIORITY
-    # ==================================================
+    # ========= PDF PRIORITY==============
 
     if pdf_path:
 
         return analyze_pdf_report(pdf_path)
 
-    # ==================================================
-    # 🖼️ IMAGE PRIORITY
-    # ==================================================
+    # ==========IMAGE PRIORITY===============
 
     if image_url:
 
         return analyze_medical_image(image_url)
 
-    # ==================================================
-    # 🧠 WAITING CITY
-    # ==================================================
+    # ========= WAITING CITY =============
 
     if state == "waiting_city":
 
@@ -577,9 +550,7 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
 
         return find_therapists(text)
 
-    # ==================================================
-    # 🧠 THERAPIST SEARCH
-    # ==================================================
+    # ========= THERAPIST SEARCH =============
 
     therapy_keywords = [
         "therapist",
@@ -603,17 +574,13 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
 
             return "📍 Please tell your city name.\n" "Example: Jabalpur"
 
-            # ==================================================
-    # 💊 MEDICINE DETECTION
-    # ==================================================
+        # ============= 💊 MEDICINE DETECTION============
 
     if is_medicine_query(user_input):
 
         return explain_medicine(user_input)
 
-    # ==================================================
-    # ⏰ MEDICINE REMINDER
-    # ==================================================
+    # =============== MEDICINE REMINDER==============
 
     if "medicine reminder" in text:
 
@@ -626,36 +593,14 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
             "Paracetamol at 8 PM"
         )
 
-    # ==================================================
-    # 🤒 HEALTH SYMPTOMS
-    # ==================================================
+    # ========= HEALTH SYMPTOMS =============
 
-    health_keywords = [
-        "fever",
-        "cold",
-        "headache",
-        "vomit",
-        "vomiting",
-        "pain",
-        "dizziness",
-        "anxiety",
-        "stress",
-        "depression",
-        "cough",
-        "bp",
-        "sugar",
-        "medicine",
-        "doctor",
-        "ill",
-        "sick",
-    ]
+    health_keywords = HEALTH_KEYWORDS
 
-    # ==================================================
-    # ❌ NON-MEDICAL RANDOM MESSAGE
-    # ==================================================
+    # ========= NON-MEDICAL RANDOM MESSAGE=======
 
     if not any(word in text for word in health_keywords):
-
+        # Ask LLM if the message is medical-related
         return (
             "⚠️ I am a medical assistant bot.\n\n"
             "Please ask:\n"
@@ -665,8 +610,6 @@ def get_ai_response(user_input: str, user_id="default", image_url=None, pdf_path
             "• Therapist help"
         )
 
-    # ==================================================
-    # 🤖 NORMAL MEDICAL AI CHAT
-    # ==================================================
+    # ========= NORMAL MEDICAL AI CHAT===========
 
     return call_doctor_ai(user_input)
